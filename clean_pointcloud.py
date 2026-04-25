@@ -234,7 +234,9 @@ def step3_intra_label_outlier_removal(
 
 def main() -> None:
     base_dir = Path(__file__).resolve().parent
-    parser = argparse.ArgumentParser(description="玉米点云清洗三步流水线")
+    parser = argparse.ArgumentParser(
+        description="Corn point cloud cleaning pipeline / 玉米点云清洗三步流水线"
+    )
     parser.add_argument(
         "--input",
         type=Path,
@@ -295,11 +297,14 @@ def main() -> None:
     stats_after = label_stats(pts_final)
     print(f"\n处理后标签分布: {stats_after}")
 
-    all_noise = (
-        np.vstack([noise_s1, noise_s3])
-        if len(noise_s1) and len(noise_s3)
-        else (noise_s1 if len(noise_s1) else noise_s3)
-    )
+    if len(noise_s1) > 0 and len(noise_s3) > 0:
+        all_noise = np.vstack([noise_s1, noise_s3])
+    elif len(noise_s1) > 0:
+        all_noise = noise_s1
+    elif len(noise_s3) > 0:
+        all_noise = noise_s3
+    else:
+        all_noise = np.empty((0, 7), dtype=pts.dtype)
 
     args.output_clean.parent.mkdir(parents=True, exist_ok=True)
     args.output_noise.parent.mkdir(parents=True, exist_ok=True)
@@ -307,7 +312,7 @@ def main() -> None:
     args.stats_after.parent.mkdir(parents=True, exist_ok=True)
 
     write_ply(args.output_clean, pts_final)
-    write_ply(args.output_noise, all_noise if len(all_noise) else np.empty((0, 7)))
+    write_ply(args.output_noise, all_noise if len(all_noise) else np.empty((0, 7), dtype=pts.dtype))
     args.stats_before.write_text(
         json.dumps(stats_before, ensure_ascii=False, indent=2),
         encoding="utf-8",
