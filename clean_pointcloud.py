@@ -8,6 +8,12 @@ import open3d as o3d
 from scipy.spatial import KDTree
 from sklearn.cluster import DBSCAN
 
+LABEL_MIN_THRESHOLDS = {
+    # Domain safeguard thresholds to reduce downstream phenotype extraction failures.
+    220: 50,  # reference/calibration object
+    221: 30,  # plant base object
+}
+
 
 def read_ply(path: Path) -> np.ndarray:
     points = []
@@ -312,7 +318,7 @@ def main() -> None:
     args.stats_after.parent.mkdir(parents=True, exist_ok=True)
 
     write_ply(args.output_clean, pts_final)
-    write_ply(args.output_noise, all_noise if len(all_noise) else np.empty((0, 7), dtype=pts.dtype))
+    write_ply(args.output_noise, all_noise)
     args.stats_before.write_text(
         json.dumps(stats_before, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -328,7 +334,7 @@ def main() -> None:
     print(f"标签统计(前): {args.stats_before}")
     print(f"标签统计(后): {args.stats_after}")
 
-    for key, min_required in {220: 50, 221: 30}.items():
+    for key, min_required in LABEL_MIN_THRESHOLDS.items():
         remaining = stats_after.get(key, 0)
         if remaining < min_required:
             print(
