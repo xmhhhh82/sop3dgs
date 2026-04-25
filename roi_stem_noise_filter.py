@@ -177,6 +177,14 @@ def run_dbscan_largest(points: np.ndarray, eps: float, min_points: int) -> np.nd
     return labels == keep
 
 
+def run_dbscan_labels(points: np.ndarray, eps: float, min_points: int) -> np.ndarray:
+    if points.shape[0] == 0:
+        return np.zeros((0,), dtype=np.int32)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    return np.asarray(pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False), dtype=np.int32)
+
+
 def pca_main_axis(points: np.ndarray) -> np.ndarray:
     if points.shape[0] < 3:
         return np.array([0.0, 1.0, 0.0])
@@ -192,7 +200,7 @@ def pca_main_axis(points: np.ndarray) -> np.ndarray:
 
 def point_line_dist(points: np.ndarray, center: np.ndarray, axis: np.ndarray) -> np.ndarray:
     d = points - center
-    proj = np.outer(d @ axis, axis)
+    proj = (d @ axis)[:, None] * axis[None, :]
     perp = d - proj
     return np.linalg.norm(perp, axis=1)
 
@@ -387,9 +395,7 @@ def main() -> None:
         if mm_local_keep.size == keep_small.size:
             # run_dbscan_largest返回“最大簇成员”布尔掩码，不含完整簇ID信息；
             # 这里重新计算完整簇标签，用于按“小簇”规则筛选候选噪声点。
-            pcd_mm = o3d.geometry.PointCloud()
-            pcd_mm.points = o3d.utility.Vector3dVector(xyz[mm_idx])
-            mm_lbl = np.asarray(pcd_mm.cluster_dbscan(eps=args.vote_cluster_eps, min_points=2, print_progress=False))
+            mm_lbl = run_dbscan_labels(xyz[mm_idx], args.vote_cluster_eps, 2)
             if mm_lbl.max() >= 0:
                 uniq, cnt = np.unique(mm_lbl[mm_lbl >= 0], return_counts=True)
                 small = {u for u, c in zip(uniq, cnt) if c <= args.vote_small_cluster_max}
@@ -518,8 +524,8 @@ def main() -> None:
 
     role_info = {
         "stem_label": args.stem_label,
-        "root_labels": sorted(list(root_labels)),
-        "special_labels": sorted(list(special_labels)),
+        "root_labels": sorted(root_labels),
+        "special_labels": sorted(special_labels),
         "note_zh": "如你的根部语义确认为0，请将--root_labels包含0；如为221，请包含221。",
         "note_en": "If your root semantic ID is 0, include 0 in --root_labels; if it is 221, include 221.",
     }
@@ -527,7 +533,7 @@ def main() -> None:
         json.dump(role_info, f, ensure_ascii=False, indent=2)
 
     ref_label_text = "220" if 220 in special_labels else "[none]"
-    ear_labels = [v for v in sorted(list(special_labels)) if 222 <= v <= 226]
+    ear_labels = [v for v in sorted(special_labels) if 222 <= v <= 226]
     ear_label_text = ", ".join(map(str, ear_labels)) if ear_labels else "[none]"
 
     report = {
@@ -573,11 +579,11 @@ def main() -> None:
         },
         "risk_hints": [
             (
-                f"If reference label {ref_label_text} "
+                f"If reference labels {ref_label_text} "
                 f"are removed, scale calibration may fail."
             ),
             (
-                f"If root labels {sorted(list(root_labels))} are removed, plant-base height may drift."
+                f"If root labels {sorted(root_labels)} are removed, plant-base height may drift."
             ),
             (
                 f"If ear labels {ear_label_text} are over-pruned, "
