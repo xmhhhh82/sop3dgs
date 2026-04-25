@@ -385,8 +385,8 @@ def main() -> None:
         keep_small = np.zeros(mm_idx.size, dtype=bool)
         mm_local_keep = run_dbscan_largest(xyz[mm_idx], args.vote_cluster_eps, 2)
         if mm_local_keep.size == keep_small.size:
-            # run_dbscan_largest仅返回布尔掩码且长度始终与输入一致，
-            # 这里改为重新获取完整簇标签，并按“小簇”规则筛选候选噪声点。
+            # run_dbscan_largest返回“最大簇成员”布尔掩码，不含完整簇ID信息；
+            # 这里重新计算完整簇标签，用于按“小簇”规则筛选候选噪声点。
             pcd_mm = o3d.geometry.PointCloud()
             pcd_mm.points = o3d.utility.Vector3dVector(xyz[mm_idx])
             mm_lbl = np.asarray(pcd_mm.cluster_dbscan(eps=args.vote_cluster_eps, min_points=2, print_progress=False))
@@ -460,7 +460,10 @@ def main() -> None:
         occ = []
         radii = []
         for i in range(len(bins) - 1):
-            m = (v >= bins[i]) & (v < bins[i + 1] if i < len(bins) - 2 else v <= bins[i + 1])
+            low = bins[i]
+            high = bins[i + 1]
+            high_inclusive = (i == len(bins) - 2)
+            m = (v >= low) & ((v <= high) if high_inclusive else (v < high))
             occ.append(np.count_nonzero(m) >= args.gate_min_points_per_bin)
             if np.count_nonzero(m) >= args.gate_min_points_per_bin:
                 r = point_line_dist(stem_pts[m], center, axis_vec)
@@ -523,6 +526,10 @@ def main() -> None:
     with open(labels_json, "w", encoding="utf-8") as f:
         json.dump(role_info, f, ensure_ascii=False, indent=2)
 
+    ref_label_text = "220" if 220 in special_labels else "[none]"
+    ear_labels = [v for v in sorted(list(special_labels)) if 222 <= v <= 226]
+    ear_label_text = ", ".join(map(str, ear_labels)) if ear_labels else "[none]"
+
     report = {
         "input_ply": input_path,
         "output_scene_dir": scene_dir,
@@ -566,14 +573,14 @@ def main() -> None:
         },
         "risk_hints": [
             (
-                f"If reference labels {sorted([v for v in special_labels if v == 220]) or '[none]'} "
+                f"If reference label {ref_label_text} "
                 f"are removed, scale calibration may fail."
             ),
             (
                 f"If root labels {sorted(list(root_labels))} are removed, plant-base height may drift."
             ),
             (
-                f"If ear labels {[v for v in sorted(list(special_labels)) if 222 <= v <= 226]} are over-pruned, "
+                f"If ear labels {ear_label_text} are over-pruned, "
                 f"ear-height estimation may fail."
             ),
             "If relabel_ratio is too high, stem thickening / leaf swallowing may occur.",
