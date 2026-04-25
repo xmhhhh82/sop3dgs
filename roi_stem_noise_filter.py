@@ -29,6 +29,8 @@ import open3d as o3d
 
 INT_TYPES = {"char", "uchar", "short", "ushort", "int", "uint"}
 FLOAT_TYPES = {"float", "double"}
+STEM_CONTINUITY_BINS = 31
+BOUNDARY_SCORE_MAX_K = 18
 
 
 @dataclass
@@ -338,6 +340,8 @@ def main() -> None:
     else:
         q = np.percentile(xyz_region[:, axis_idx], 5)
         low = xyz_region[:, axis_idx] <= q
+        if not np.any(low):
+            low[np.argmin(xyz_region[:, axis_idx])] = True
         root_centroid = xyz_region[low].mean(axis=0)
         root_axis_val = float(np.min(xyz_region[low, axis_idx]))
 
@@ -391,19 +395,11 @@ def main() -> None:
     mm_idx = np.where(mismatch)[0]
     if mm_idx.size > 0:
         keep_small = np.zeros(mm_idx.size, dtype=bool)
-        mm_local_keep = run_dbscan_largest(xyz[mm_idx], args.vote_cluster_eps, 2)
-        if mm_local_keep.size == keep_small.size:
-            # run_dbscan_largest返回“最大簇成员”布尔掩码，不含完整簇ID信息；
-            # run_dbscan_largest returns only a largest-cluster boolean mask,
-            # without full cluster IDs.
-            # 这里重新计算完整簇标签，用于按“小簇”规则筛选候选噪声点。
-            mm_lbl = run_dbscan_labels(xyz[mm_idx], args.vote_cluster_eps, 2)
-            if mm_lbl.max() >= 0:
-                uniq, cnt = np.unique(mm_lbl[mm_lbl >= 0], return_counts=True)
-                small = {u for u, c in zip(uniq, cnt) if c <= args.vote_small_cluster_max}
-                keep_small = np.array([(v in small) if v >= 0 else True for v in mm_lbl], dtype=bool)
-            else:
-                keep_small[:] = True
+        mm_lbl = run_dbscan_labels(xyz[mm_idx], args.vote_cluster_eps, 2)
+        if mm_lbl.max() >= 0:
+            uniq, cnt = np.unique(mm_lbl[mm_lbl >= 0], return_counts=True)
+            small = {u for u, c in zip(uniq, cnt) if c <= args.vote_small_cluster_max}
+            keep_small = np.array([(v in small) if v >= 0 else True for v in mm_lbl], dtype=bool)
         else:
             keep_small[:] = True
         relabel_candidates[mm_idx[keep_small]] = True
@@ -464,7 +460,7 @@ def main() -> None:
     if stem_pts.shape[0] >= 30:
         v = stem_pts[:, axis_idx]
         vmin, vmax = float(np.min(v)), float(np.max(v))
-        bins = np.linspace(vmin, vmax, 31)
+        bins = np.linspace(vmin, vmax, STEM_CONTINUITY_BINS)
         occ = []
         radii = []
         for i in range(len(bins) - 1):
@@ -489,13 +485,13 @@ def main() -> None:
     nonstem_before_mask = region_mask & (~stem_mask)
     before_pts = xyz[nonstem_before_mask]
     before_lbl = labels_orig[nonstem_before_mask]
-    boundary_before, sampled = boundary_score(before_pts, before_lbl, k=min(args.vote_k, 18))
+    boundary_before, sampled = boundary_score(before_pts, before_lbl, k=min(args.vote_k, BOUNDARY_SCORE_MAX_K))
 
     remain_mask = region_mask & (~floating_drop)
     nonstem_after_mask = remain_mask & (~stem_mask)
     after_pts = xyz[nonstem_after_mask]
     after_lbl = labels[nonstem_after_mask]
-    boundary_after, _ = boundary_score(after_pts, after_lbl, k=min(args.vote_k, 18))
+    boundary_after, _ = boundary_score(after_pts, after_lbl, k=min(args.vote_k, BOUNDARY_SCORE_MAX_K))
     boundary_retention = safe_div(float(boundary_after), float(max(boundary_before, 1)))
 
     gate = {
@@ -528,7 +524,7 @@ def main() -> None:
         "stem_label": args.stem_label,
         "root_labels": sorted(root_labels),
         "special_labels": sorted(special_labels),
-        "note_zh": "默认--root_labels=0,221；若只保留单一根部语义，可改为--root_labels 0 或 --root_labels 221。",
+        "note_zh": "默认--root_labels=0, 221；若只保留单一根部语义，可改为--root_labels 0 或 --root_labels 221。",
         "note_en": "Default --root_labels is 0,221. For a single-root semantic case, use --root_labels 0 or --root_labels 221.",
     }
     with open(labels_json, "w", encoding="utf-8") as f:
