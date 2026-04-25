@@ -114,7 +114,9 @@ def read_ascii_ply(path: str) -> PlyData:
 
 
 def write_ascii_ply(path: str, ply: PlyData, mask: np.ndarray, labels: np.ndarray) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    out_dir = os.path.dirname(path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     selected = ply.data[mask].copy()
     selected[:, ply.prop_index["object_value"]] = labels[mask]
 
@@ -139,7 +141,9 @@ def write_ascii_ply(path: str, ply: PlyData, mask: np.ndarray, labels: np.ndarra
 
 
 def write_binary_hybrid(path: str, ply: PlyData, mask: np.ndarray) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    out_dir = os.path.dirname(path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     xyz = np.stack(
         [
             ply.data[mask, ply.prop_index["x"]],
@@ -253,6 +257,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stem_connect_eps", type=float, default=0.06)
     parser.add_argument("--stem_connect_min_points", type=int, default=12)
     parser.add_argument("--min_seed_points", type=int, default=15)
+    parser.add_argument("--root_axis_tolerance", type=float, default=0.03)
 
     parser.add_argument("--vote_k", type=int, default=24)
     parser.add_argument("--vote_majority", type=float, default=0.72)
@@ -312,11 +317,9 @@ def main() -> None:
         roi_mask = np.ones(total_n, dtype=bool)
     else:
         xmin, xmax, ymin, ymax, zmin, zmax = args.roi
-        roi_mask = (
-            (xyz[:, 0] >= xmin) & (xyz[:, 0] <= xmax) &
-            (xyz[:, 1] >= ymin) & (xyz[:, 1] <= ymax) &
-            (xyz[:, 2] >= zmin) & (xyz[:, 2] <= zmax)
-        )
+        roi_mask = (xyz[:, 0] >= xmin) & (xyz[:, 0] <= xmax) & \
+                   (xyz[:, 1] >= ymin) & (xyz[:, 1] <= ymax) & \
+                   (xyz[:, 2] >= zmin) & (xyz[:, 2] <= zmax)
 
     xyz_roi = xyz[roi_mask]
     roi_largest_local = run_dbscan_largest(xyz_roi, args.roi_dbscan_eps, args.roi_dbscan_min_points)
@@ -331,7 +334,10 @@ def main() -> None:
     lbl_region = labels[region_mask]
 
     if xyz_region.shape[0] < 20:
-        raise RuntimeError("ROI/LCC filtered points are too few to continue (ROI/连通域过滤后点过少)")
+        raise RuntimeError(
+            f"ROI/LCC filtered points too few: {xyz_region.shape[0]} < 20 "
+            f"(ROI/连通域过滤后点过少: {xyz_region.shape[0]} < 20)"
+        )
 
     root_mask_region = np.isin(lbl_region, list(root_labels))
     if np.any(root_mask_region):
@@ -372,7 +378,7 @@ def main() -> None:
     stem_tube_region = (
         stem_candidate_region &
         (dist_region <= seed_radius) &
-        (axis_vals >= (root_axis_val - 0.03))
+        (axis_vals >= (root_axis_val - args.root_axis_tolerance))
     )
 
     xyz_tube = xyz_region[stem_tube_region]
@@ -524,8 +530,8 @@ def main() -> None:
         "stem_label": args.stem_label,
         "root_labels": sorted(root_labels),
         "special_labels": sorted(special_labels),
-        "note_zh": "默认--root_labels=0, 221；若只保留单一根部语义，可改为--root_labels 0 或 --root_labels 221。",
-        "note_en": "Default --root_labels is 0,221. For a single-root semantic case, use --root_labels 0 or --root_labels 221.",
+        "note_zh": "默认--root_labels=0,221；若只保留单一根部语义，可改为--root_labels=0 或 --root_labels=221。",
+        "note_en": "Default --root_labels is 0,221. For a single-root semantic case, use --root_labels=0 or --root_labels=221.",
     }
     with open(labels_json, "w", encoding="utf-8") as f:
         json.dump(role_info, f, ensure_ascii=False, indent=2)
