@@ -394,6 +394,8 @@ def main() -> None:
         mm_local_keep = run_dbscan_largest(xyz[mm_idx], args.vote_cluster_eps, 2)
         if mm_local_keep.size == keep_small.size:
             # run_dbscan_largest返回“最大簇成员”布尔掩码，不含完整簇ID信息；
+            # run_dbscan_largest returns only a largest-cluster boolean mask,
+            # without full cluster IDs.
             # 这里重新计算完整簇标签，用于按“小簇”规则筛选候选噪声点。
             mm_lbl = run_dbscan_labels(xyz[mm_idx], args.vote_cluster_eps, 2)
             if mm_lbl.max() >= 0:
@@ -526,8 +528,8 @@ def main() -> None:
         "stem_label": args.stem_label,
         "root_labels": sorted(root_labels),
         "special_labels": sorted(special_labels),
-        "note_zh": "如你的根部语义确认为0，请将--root_labels包含0；如为221，请包含221。",
-        "note_en": "If your root semantic ID is 0, include 0 in --root_labels; if it is 221, include 221.",
+        "note_zh": "默认--root_labels=0,221；若只保留单一根部语义，可改为--root_labels 0 或 --root_labels 221。",
+        "note_en": "Default --root_labels is 0,221. For a single-root semantic case, use --root_labels 0 or --root_labels 221.",
     }
     with open(labels_json, "w", encoding="utf-8") as f:
         json.dump(role_info, f, ensure_ascii=False, indent=2)
@@ -591,6 +593,7 @@ def main() -> None:
             ),
             "If relabel_ratio is too high, stem thickening / leaf swallowing may occur.",
             "若关键标签被误删，表型指标会失真；请结合quality_gate结果复核参数。",
+            "If key labels are removed by mistake, phenotype metrics may be biased; re-check parameters with quality_gate results.",
         ],
         "parameters": vars(args),
     }
