@@ -222,6 +222,7 @@ def boundary_score(points: np.ndarray, labels: np.ndarray, k: int, sample_max: i
 
 
 def parse_args() -> argparse.Namespace:
+    default_phenotype = str(Path(__file__).resolve().parent / "真实表型提取代码_0327.py")
     parser = argparse.ArgumentParser(description="ROI主干去噪改标并生成表型输入点云")
     parser.add_argument("--input_ply", required=True, help="输入ASCII PLY绝对路径")
     parser.add_argument("--output_scene_dir", required=True, help="输出场景目录绝对路径")
@@ -241,6 +242,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stem_radius_max", type=float, default=0.25)
     parser.add_argument("--stem_connect_eps", type=float, default=0.06)
     parser.add_argument("--stem_connect_min_points", type=int, default=12)
+    parser.add_argument("--min_seed_points", type=int, default=15)
 
     parser.add_argument("--vote_k", type=int, default=24)
     parser.add_argument("--vote_majority", type=float, default=0.72)
@@ -259,11 +261,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gate_max_relabel_ratio", type=float, default=0.08)
     parser.add_argument("--gate_min_relabel_consistency", type=float, default=0.70)
     parser.add_argument("--gate_min_boundary_retention", type=float, default=0.92)
+    parser.add_argument("--gate_min_points_per_bin", type=int, default=3)
 
     parser.add_argument("--run_phenotype", action="store_true")
     parser.add_argument(
         "--phenotype_script",
-        default="/home/runner/work/sop3dgs/sop3dgs/真实表型提取代码_0327.py",
+        default=default_phenotype,
     )
     parser.add_argument("--phenotype_skip_skeleton", action="store_true")
     return parser.parse_args()
@@ -318,7 +321,7 @@ def main() -> None:
     lbl_region = labels[region_mask]
 
     if xyz_region.shape[0] < 20:
-        raise RuntimeError("ROI/连通域过滤后点过少，无法继续")
+        raise RuntimeError("ROI/LCC filtered points are too few to continue (ROI/连通域过滤后点过少)")
 
     root_mask_region = np.isin(lbl_region, list(root_labels))
     if np.any(root_mask_region):
@@ -334,10 +337,10 @@ def main() -> None:
     stem_candidate_region = ~np.isin(lbl_region, list(special_exclude))
 
     seed_region = stem_candidate_region & (lbl_region == args.stem_label)
-    if np.count_nonzero(seed_region) < 15:
+    if np.count_nonzero(seed_region) < args.min_seed_points:
         d_root = np.linalg.norm(xyz_region - root_centroid[None, :], axis=1)
         seed_region = stem_candidate_region & (d_root <= args.stem_seed_radius)
-    if np.count_nonzero(seed_region) < 15:
+    if np.count_nonzero(seed_region) < args.min_seed_points:
         seed_region = stem_candidate_region
 
     axis_vec = pca_main_axis(xyz_region[seed_region])
@@ -382,7 +385,8 @@ def main() -> None:
         keep_small = np.zeros(mm_idx.size, dtype=bool)
         mm_local_keep = run_dbscan_largest(xyz[mm_idx], args.vote_cluster_eps, 2)
         if mm_local_keep.size == keep_small.size:
-            # largest簇不是目标，使用簇统计来找小簇
+            # run_dbscan_largest仅返回布尔掩码且长度始终与输入一致，
+            # 这里改为重新获取完整簇标签，并按“小簇”规则筛选候选噪声点。
             pcd_mm = o3d.geometry.PointCloud()
             pcd_mm.points = o3d.utility.Vector3dVector(xyz[mm_idx])
             mm_lbl = np.asarray(pcd_mm.cluster_dbscan(eps=args.vote_cluster_eps, min_points=2, print_progress=False))
@@ -457,8 +461,8 @@ def main() -> None:
         radii = []
         for i in range(len(bins) - 1):
             m = (v >= bins[i]) & (v < bins[i + 1] if i < len(bins) - 2 else v <= bins[i + 1])
-            occ.append(np.count_nonzero(m) >= 3)
-            if np.count_nonzero(m) >= 3:
+            occ.append(np.count_nonzero(m) >= args.gate_min_points_per_bin)
+            if np.count_nonzero(m) >= args.gate_min_points_per_bin:
                 r = point_line_dist(stem_pts[m], center, axis_vec)
                 radii.append(float(np.median(r)))
         occ_arr = np.asarray(occ, dtype=np.int32)
@@ -513,7 +517,8 @@ def main() -> None:
         "stem_label": args.stem_label,
         "root_labels": sorted(list(root_labels)),
         "special_labels": sorted(list(special_labels)),
-        "note": "如你的根部语义确认为0，请将--root_labels包含0；如为221，请包含221。",
+        "note_zh": "如你的根部语义确认为0，请将--root_labels包含0；如为221，请包含221。",
+        "note_en": "If your root semantic ID is 0, include 0 in --root_labels; if it is 221, include 221.",
     }
     with open(labels_json, "w", encoding="utf-8") as f:
         json.dump(role_info, f, ensure_ascii=False, indent=2)
@@ -560,10 +565,19 @@ def main() -> None:
             },
         },
         "risk_hints": [
-            "若220被误删，尺寸标定会失败。",
-            "若0/221根部标签缺失，株高基部会漂移。",
-            "若222-226过度清理，穗位高会缺失。",
-            "若relabel_ratio过高，可能主干变粗并吞并叶片。",
+            (
+                f"If reference labels {sorted([v for v in special_labels if v == 220]) or '[none]'} "
+                f"are removed, scale calibration may fail."
+            ),
+            (
+                f"If root labels {sorted(list(root_labels))} are removed, plant-base height may drift."
+            ),
+            (
+                f"If ear labels {[v for v in sorted(list(special_labels)) if 222 <= v <= 226]} are over-pruned, "
+                f"ear-height estimation may fail."
+            ),
+            "If relabel_ratio is too high, stem thickening / leaf swallowing may occur.",
+            "若关键标签被误删，表型指标会失真；请结合quality_gate结果复核参数。",
         ],
         "parameters": vars(args),
     }
@@ -607,4 +621,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
